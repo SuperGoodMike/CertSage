@@ -1,9 +1,17 @@
-# CertSage
-Easy webpage interface, optimized for cPanel, no commands to type, root not required
+# CertSage 
+
 Credit goes to Griffin Software
 
+Features
 
-Introduction
+-Easy webpage interface
+-Optimized for cPanel install
+-No commands to type, root not required
+-Supports Subject Alternative Names (SANs)
+
+
+
+Introduction:
 Certsage is awesome but it allways had issues with Subject Alternative Names (SANs). I have added this feature, enjoy. 
 CertSage was designed for people of all ages and experience levels who want an incredibly quick and easy way to acquire Let's Encrypt TLS/SSL certificates. CertSage is especially helpful if you are using a shared hosting plan that does not allow root access, such as GoDaddy or tsoHost shared hosting. It's free, of course!
 
