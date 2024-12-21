@@ -479,271 +479,282 @@ class CertSage
                      0644);
   }
 
-  public function acquireCertificate()
-  {
+public function acquireCertificate()
+{
     $this->responses = [];
 
     try
     {
-      $this->establishAccount();
+        $this->establishAccount();
 
-      // *** CREATE NEW ORDER ***
+        // *** CREATE NEW ORDER ***
 
-      if (!isset($_POST["domainNames"]))
-        throw new Exception("domainNames was missing");
+        if (!isset($_POST["domainNames"]))
+            throw new Exception("domainNames was missing");
 
-      if (!is_string($_POST["domainNames"]))
-        throw new Exception("domainNames was not a string");
+        if (!is_string($_POST["domainNames"]))
+            throw new Exception("domainNames was not a string");
 
-      $identifiers = [];
+        $identifiers = [];
 
-      for ($domainName = strtok($_POST["domainNames"], "\r\n");
-           $domainName !== false;
-           $domainName = strtok("\r\n"))
-        $identifiers[] = [
-          "type"  => "dns",
-          "value" => $domainName
-        ];
+        for ($domainName = strtok($_POST["domainNames"], "\r\n");
+             $domainName !== false;
+             $domainName = strtok("\r\n"))
+            $identifiers[] = [
+                "type"  => "dns",
+                "value" => $domainName
+            ];
 
-      $url = $this->acmeDirectory["newOrder"];
-
-      $payload = [
-        "identifiers" => $identifiers
-      ];
-
-      $response = $this->sendRequest($url, 201, $payload);
-
-      $orderurl = $this->findHeader($response, "location");
-      $order = $this->decodeJSON($response["body"]);
-
-      // *** GET CHALLENGES ***
-
-      $authorizationurls = [];
-      $challengeurls = [];
-      $challengetokens = [];
-
-      $payload = ""; // empty
-
-      foreach ($order["authorizations"] as $url)
-      {
-        $response = $this->sendRequest($url, 200, $payload);
-
-        $authorization = $this->decodeJSON($response["body"]);
-
-        if ($authorization["status"] === "valid")
-          continue;
-
-        $authorizationurls[] = $url;
-
-        foreach ($authorization["challenges"] as $challenge)
-        {
-          if ($challenge["type"] === "http-01")
-          {
-            $challengeurls[] = $challenge["url"];
-            $challengetokens[] = $challenge["token"];
-            continue 2;
-          }
+        // Add SANs to identifiers if provided
+        if (isset($_POST["subjectAltNames"])) {
+            for ($san = strtok($_POST["subjectAltNames"], "\r\n");
+                 $san !== false;
+                 $san = strtok("\r\n"))
+                $identifiers[] = [
+                    "type"  => "dns",
+                    "value" => $san
+                ];
         }
 
-        throw new Exception("no http-01 challenge found");
-      }
+        $url = $this->acmeDirectory["newOrder"];
 
-      // *** CREATE HTTP-01 CHALLENGE DIRECTORIES ***
+        $payload = [
+            "identifiers" => $identifiers
+        ];
 
-      $this->createDirectory("./.well-known", 0755);
-      $this->createDirectory("./.well-known/acme-challenge", 0755);
+        $response = $this->sendRequest($url, 201, $payload);
 
-      try
-      {
-        // *** WRITE HTTP-01 CHALLENGE FILES ***
+        $orderurl = $this->findHeader($response, "location");
+        $order = $this->decodeJSON($response["body"]);
 
-        foreach ($challengetokens as $challengetoken)
-          $this->writeFile("./.well-known/acme-challenge/$challengetoken",
-                           "$challengetoken." . $this->thumbprint,
-                           0644);
+        // *** GET CHALLENGES ***
 
-        // *** CONFIRM CHALLENGES ***
-
-        sleep(2);
-
-        $payload = (object)[]; // empty object
-
-        foreach ($challengeurls as $url)
-          $challenge = $this->sendRequest($url, 200, $payload);
-
-        // *** CHECK AUTHORIZATIONS ***
+        $authorizationurls = [];
+        $challengeurls = [];
+        $challengetokens = [];
 
         $payload = ""; // empty
 
-        foreach ($authorizationurls as $url)
+        foreach ($order["authorizations"] as $url)
         {
-          for ($attempt = 1; true; ++$attempt)
-          {
-            sleep(1);
-
             $response = $this->sendRequest($url, 200, $payload);
 
             $authorization = $this->decodeJSON($response["body"]);
 
-            if ($authorization["status"] !== "pending")
-              break;
+            if ($authorization["status"] === "valid")
+                continue;
 
-            if ($attempt == 10)
-              throw new Exception("authorization still pending after $attempt attempts");
-          }
+            $authorizationurls[] = $url;
 
-          if ($authorization["status"] !== "valid")
-            throw new Exception($authorization["challenges"][0]["error"]["type"] . "<br>" . $authorization["challenges"][0]["error"]["detail"]);
+            foreach ($authorization["challenges"] as $challenge)
+            {
+                if ($challenge["type"] === "http-01")
+                {
+                    $challengeurls[] = $challenge["url"];
+                    $challengetokens[] = $challenge["token"];
+                    continue 2;
+                }
+            }
+
+            throw new Exception("no http-01 challenge found");
         }
-      }
-      finally
-      {
-        // *** DELETE HTTP-01 CHALLENGE FILES ***
 
-        foreach ($challengetokens as $challengetoken)
-          $this->deleteFile("./.well-known/acme-challenge/$challengetoken");
-      }
+        // *** CREATE HTTP-01 CHALLENGE DIRECTORIES ***
 
-      // *** GENERATE CERTIFICATE KEY ***
+        $this->createDirectory("./.well-known", 0755);
+        $this->createDirectory("./.well-known/acme-challenge", 0755);
 
-      $options = [
-        "digest_alg"       => "sha256",
-        "private_key_bits" => 2048,
-        "private_key_type" => OPENSSL_KEYTYPE_RSA
-      ];
+        try
+        {
+            // *** WRITE HTTP-01 CHALLENGE FILES ***
 
-      $certificateKeyObject = openssl_pkey_new($options);
+            foreach ($challengetokens as $challengetoken)
+                $this->writeFile("./.well-known/acme-challenge/$challengetoken",
+                                 "$challengetoken." . $this->thumbprint,
+                                 0644);
 
-      if ($certificateKeyObject === false)
-        throw new Exception("generate certificate key failed");
+            // *** CONFIRM CHALLENGES ***
 
-      if (!openssl_pkey_export($certificateKeyObject, $certificateKey))
-        throw new Exception("export certificate key failed");
+            sleep(2);
 
-      // *** GENERATE CSR ***
+            $payload = (object)[]; // empty object
 
-      $dn = [
-        "commonName" => $identifiers[0]["value"]
-      ];
+            foreach ($challengeurls as $url)
+                $challenge = $this->sendRequest($url, 200, $payload);
 
-      $options = [
-        "digest_alg" => "sha256",
-        "config" => $this->dataDirectory . "/openssl.cnf"
-      ];
+            // *** CHECK AUTHORIZATIONS ***
 
-      $opensslcnf =
-        "[req]\n" .
-        "distinguished_name = req_distinguished_name\n" .
-        "req_extensions = v3_req\n\n" .
-        "[req_distinguished_name]\n\n" .
-        "[v3_req]\n" .
-        "subjectAltName = @san\n\n" .
-        "[san]\n";
+            $payload = ""; // empty
 
-      $i = 0;
-      foreach ($identifiers as $identifier)
-      {
-        ++$i;
-        $opensslcnf .= "DNS.$i = " . $identifier["value"] . "\n";
-      }
+            foreach ($authorizationurls as $url)
+            {
+                for ($attempt = 1; true; ++$attempt)
+                {
+                    sleep(1);
 
-      try
-      {
-        $this->writeFile($this->dataDirectory . "/openssl.cnf",
-                         $opensslcnf,
-                         0644);
+                    $response = $this->sendRequest($url, 200, $payload);
 
-        $csrObject = openssl_csr_new($dn, $certificateKey, $options);
+                    $authorization = $this->decodeJSON($response["body"]);
 
-        if ($csrObject === false)
-          throw new Exception("generate csr failed");
-      }
-      finally
-      {
-        $this->deleteFile($this->dataDirectory . "/openssl.cnf");
-      }
+                    if ($authorization["status"] !== "pending")
+                        break;
 
-      if (!openssl_csr_export($csrObject, $csr))
-        throw new Exception("export csr failed");
+                    if ($attempt == 10)
+                        throw new Exception("authorization still pending after $attempt attempts");
+                }
 
-      // *** FINALIZE ORDER ***
+                if ($authorization["status"] !== "valid")
+                    throw new Exception($authorization["challenges"][0]["error"]["type"] . "<br>" . $authorization["challenges"][0]["error"]["detail"]);
+            }
+        }
+        finally
+        {
+            // *** DELETE HTTP-01 CHALLENGE FILES ***
 
-      $url = $order["finalize"];
+            foreach ($challengetokens as $challengetoken)
+                $this->deleteFile("./.well-known/acme-challenge/$challengetoken");
+        }
 
-      $regex = "~^-----BEGIN CERTIFICATE REQUEST-----([A-Za-z0-9+/]+)=?=?-----END CERTIFICATE REQUEST-----$~";
-      $outcome = preg_match($regex, str_replace("\n", "", $csr), $matches);
+        // *** GENERATE CERTIFICATE KEY ***
 
-      if ($outcome === false)
-        throw new Exception("extract csr failed");
+        $options = [
+            "digest_alg"       => "sha256",
+            "private_key_bits" => 2048,
+            "private_key_type" => OPENSSL_KEYTYPE_RSA
+        ];
 
-      if ($outcome === 0)
-        throw new Exception("csr format mismatch");
+        $certificateKeyObject = openssl_pkey_new($options);
 
-      $payload = [
-        "csr" => strtr($matches[1], "+/", "-_")
-      ];
+        if ($certificateKeyObject === false)
+            throw new Exception("generate certificate key failed");
 
-      $response = $this->sendRequest($url, 200, $payload);
+        if (!openssl_pkey_export($certificateKeyObject, $certificateKey))
+            throw new Exception("export certificate key failed");
 
-      $order = $this->decodeJSON($response["body"]);
+        // *** GENERATE CSR ***
 
-      if ($order["status"] !== "valid")
-      {
-        // *** CHECK ORDER ***
+        $dn = [
+            "commonName" => $identifiers[0]["value"]
+        ];
 
-        $url = $orderurl;
+        $options = [
+            "digest_alg" => "sha256",
+            "config" => $this->dataDirectory . "/openssl.cnf"
+        ];
+
+        $opensslcnf =
+            "[req]\n" .
+            "distinguished_name = req_distinguished_name\n" .
+            "req_extensions = v3_req\n\n" .
+            "[req_distinguished_name]\n\n" .
+            "[v3_req]\n" .
+            "subjectAltName = @san\n\n" .
+            "[san]\n";
+
+        $i = 0;
+        foreach ($identifiers as $identifier)
+        {
+            ++$i;
+            $opensslcnf .= "DNS.$i = " . $identifier["value"] . "\n";
+        }
+
+        try
+        {
+            $this->writeFile($this->dataDirectory . "/openssl.cnf",
+                             $opensslcnf,
+                             0644);
+
+            $csrObject = openssl_csr_new($dn, $certificateKey, $options);
+
+            if ($csrObject === false)
+                throw new Exception("generate csr failed");
+        }
+        finally
+        {
+            $this->deleteFile($this->dataDirectory . "/openssl.cnf");
+        }
+
+        if (!openssl_csr_export($csrObject, $csr))
+            throw new Exception("export csr failed");
+
+        // *** FINALIZE ORDER ***
+
+        $url = $order["finalize"];
+
+        $regex = "~^-----BEGIN CERTIFICATE REQUEST-----([A-Za-z0-9+/]+)=?=?-----END CERTIFICATE REQUEST-----$~";
+        $outcome = preg_match($regex, str_replace("\n", "", $csr), $matches);
+
+        if ($outcome === false)
+            throw new Exception("extract csr failed");
+
+        if ($outcome === 0)
+            throw new Exception("csr format mismatch");
+
+        $payload = [
+            "csr" => strtr($matches[1], "+/", "-_")
+        ];
+
+        $response = $this->sendRequest($url, 200, $payload);
+
+        $order = $this->decodeJSON($response["body"]);
+
+        if ($order["status"] !== "valid")
+        {
+            // *** CHECK ORDER ***
+
+            $url = $orderurl;
+
+            $payload = ""; // empty
+
+            for ($attempt = 1; true; ++$attempt)
+            {
+                sleep(1);
+
+                $response = $this->sendRequest($url, 200, $payload);
+
+                $order = $this->decodeJSON($response["body"]);
+
+                if (!(   $order["status"] === "pending"
+                      || $order["status"] === "processing"
+                      || $order["status"] === "ready"))
+                    break;
+
+                if ($attempt == 10)
+                    throw new Exception("order still pending after $attempt attempts");
+            }
+
+            if ($order["status"] !== "valid")
+                throw new Exception("order failed");
+        }
+
+        // *** DOWNLOAD CERTIFICATE ***
+
+        $url = $order["certificate"];
 
         $payload = ""; // empty
 
-        for ($attempt = 1; true; ++$attempt)
+        $response = $this->sendRequest($url, 200, $payload);
+
+        $certificate = $response["body"];
+
+        if ($_POST["environment"] == "production")
         {
-          sleep(1);
+            // *** WRITE CERTIFICATE AND CERTIFICATE KEY ***
 
-          $response = $this->sendRequest($url, 200, $payload);
+            $this->writeFile($this->dataDirectory . "/certificate.crt",
+                             $certificate,
+                             0644);
 
-          $order = $this->decodeJSON($response["body"]);
-
-          if (!(   $order["status"] === "pending"
-                || $order["status"] === "processing"
-                || $order["status"] === "ready"))
-            break;
-
-          if ($attempt == 10)
-            throw new Exception("order still pending after $attempt attempts");
+            $this->writeFile($this->dataDirectory . "/certificate.key",
+                             $certificateKey,
+                             0644);
         }
-
-        if ($order["status"] !== "valid")
-          throw new Exception("order failed");
-      }
-
-      // *** DOWNLOAD CERTIFICATE ***
-
-      $url = $order["certificate"];
-
-      $payload = ""; // empty
-
-      $response = $this->sendRequest($url, 200, $payload);
-
-      $certificate = $response["body"];
-
-      if ($_POST["environment"] == "production")
-      {
-        // *** WRITE CERTIFICATE AND CERTIFICATE KEY ***
-
-        $this->writeFile($this->dataDirectory . "/certificate.crt",
-                         $certificate,
-                         0644);
-
-        $this->writeFile($this->dataDirectory . "/certificate.key",
-                         $certificateKey,
-                         0644);
-      }
     }
     finally
     {
-      $this->dumpResponses();
+        $this->dumpResponses();
     }
-  }
+}
 
   public function installCertificate()
 {
@@ -1170,6 +1181,12 @@ Please use the <a href="https://letsencrypt.org/docs/staging-environment/" targe
 One domain name per line<br>
 No wildcards (*) allowed<br>
 <textarea name="domainNames" rows="5"><?= $domainNames ?></textarea>
+</p>
+
+<p>
+Subject Alternative Names (SANs)<br>
+One domain name per line<br>
+<textarea name="subjectAltNames" rows="5"></textarea>
 </p>
 
 <p>
