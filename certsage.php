@@ -746,127 +746,102 @@ class CertSage
   }
 
   public function installCertificate()
-  {
+{
     // *** READ CERTIFICATE ***
-
     $certificate = $this->readFile($this->dataDirectory . "/certificate.crt");
 
     if (!isset($certificate))
-      throw new Exception("certificate file does not exist");
+        throw new Exception("certificate file does not exist");
 
     // *** EXTRACT CERTIFICATE ***
-
     $regex = "~^(-----BEGIN CERTIFICATE-----\n(?:[A-Za-z0-9+/]{64}\n)*(?:(?:[A-Za-z0-9+/]{4}){0,15}(?:[A-Za-z0-9+/]{2}(?:[A-Za-z0-9+/]|=)=)?\n)?-----END CERTIFICATE-----)~";
     $outcome = preg_match($regex, $certificate, $matches);
 
     if ($outcome === false)
-      throw new Exception("extract certificate failed");
+        throw new Exception("extract certificate failed");
 
     if ($outcome === 0)
-      throw new Exception("certificate format mismatch");
+        throw new Exception("certificate format mismatch");
 
     $certificate = $matches[1];
 
     // *** CHECK CERTIFICATE ***
-
     $certificateObject = openssl_x509_read($certificate);
 
     if ($certificateObject === false)
-      throw new Exception("check certificate failed");
+        throw new Exception("check certificate failed");
 
     // *** READ CERTIFICATE KEY ***
-
     $certificateKey = $this->readFile($this->dataDirectory . "/certificate.key");
 
     if (!isset($certificateKey))
-      throw new Exception("certificate key file does not exist");
+        throw new Exception("certificate key file does not exist");
 
     // *** EXTRACT CERTIFICATE KEY ***
-
     $regex = "~^(-----BEGIN PRIVATE KEY-----\n(?:[A-Za-z0-9+/]{64}\n)*(?:(?:[A-Za-z0-9+/]{4}){0,15}(?:[A-Za-z0-9+/]{2}(?:[A-Za-z0-9+/]|=)=)?\n)?-----END PRIVATE KEY-----)~";
     $outcome = preg_match($regex, $certificateKey, $matches);
 
     if ($outcome === false)
-      throw new Exception("extract certificate key failed");
+        throw new Exception("extract certificate key failed");
 
     if ($outcome === 0)
-      throw new Exception("certificate key format mismatch");
+        throw new Exception("certificate key format mismatch");
 
     $certificateKey = $matches[1];
 
     // *** CHECK CERTIFICATE KEY ***
-
     $certificateKeyObject = openssl_pkey_get_private($certificateKey);
 
     if ($certificateKeyObject === false)
-      throw new Exception("check certificate key failed");
+        throw new Exception("check certificate key failed");
 
     // *** VERIFY CERTIFICATE AND CERTIFICATE KEY CORRESPOND ***
-
     if (!openssl_x509_check_private_key($certificateObject, $certificateKeyObject))
-      throw new Exception("certificate and certificate key do not correspond");
+        throw new Exception("certificate and certificate key do not correspond");
 
     // *** EXTRACT DOMAIN NAMES ***
-
     $certificateData = openssl_x509_parse($certificateObject);
 
     if ($certificateData === false)
-      throw new Exception("parse certificate failed");
+        throw new Exception("parse certificate failed");
 
     if (!isset($certificateData["extensions"]["subjectAltName"]))
-      throw new Exception("No SANs found in certificate");
+        throw new Exception("No SANs found in certificate");
 
     $sans = explode(", ", $certificateData["extensions"]["subjectAltName"]);
+    $domains = [];
 
-    foreach ($sans as &$san)
-    {
-      list($type, $value) = explode(":", $san);
+    foreach ($sans as $san) {
+        list($type, $value) = explode(":", $san);
 
-      if ($type !== "DNS")
-        throw new Exception("Non-DNS SAN found in certificate");
+        if ($type !== "DNS")
+            throw new Exception("Non-DNS SAN found in certificate");
 
-      $san = $value;
+        $domains[] = $value;
     }
 
-    unset($san);
+    // *** INSTALL CERTIFICATES FOR EACH DOMAIN ***
+    foreach ($domains as $domain) {
+        $cert = rawurlencode($certificate);
+        $key = rawurlencode($certificateKey);
 
-    // *** INSTALL CERTIFICATE ***
+        $output = `uapi SSL install_ssl domain=$domain cert=$cert key=$key --output=json`;
 
-    $domain = $sans[0];
-    $domainLength = strlen($sans[0]);
+        if ($output === false)
+            throw new Exception("shell execution pipe could not be established");
 
-    foreach ($sans as $san)
-    {
-      $sanLength = strlen($san);
+        if (!isset($output))
+            throw new Exception("uapi SSL install_ssl failed");
 
-      if ($domainLength <= $sanLength)
-        continue;
+        $output = `uapi SSL toggle_ssl_redirect_for_domains domains=$domain state=1 --output=json`;
 
-      $domain = $san;
-      $domainLength = $sanLength;
+        if ($output === false)
+            throw new Exception("shell execution pipe could not be established");
+
+        if (!isset($output))
+            throw new Exception("uapi SSL toggle_ssl_redirect_for_domains failed");
     }
-
-    $cert   = rawurlencode($certificate);
-    $key    = rawurlencode($certificateKey);
-
-    $output = `uapi SSL install_ssl domain=$domain cert=$cert key=$key --output=json`;
-
-    // !!! need to test with shell turned off in cPanel
-    if ($output === false)
-      throw new Exception("shell execution pipe could not be established");
-
-    if (!isset($output))
-      throw new Exception("uapi SSL install_ssl failed");
-
-    $output = `uapi SSL toggle_ssl_redirect_for_domains domains=$domain state=1 --output=json`;
-
-    if ($output === false)
-      throw new Exception("shell execution pipe could not be established");
-
-    if (!isset($output))
-      throw new Exception("uapi SSL toggle_ssl_redirect_for_domains failed");
-  }
-
+}
   public function updateContact()
   {
     $this->responses = [];
@@ -1213,15 +1188,17 @@ Contents of <?= $certsage->dataDirectory ?>/password.txt<br>
 
 <form autocomplete="off" method="post" onsubmit="document.getElementById('wait').style.display = 'block';">
 <h2>Install Certificate into cPanel</h2>
-
 <p>
-Password<br>
-Contents of <?= $certsage->dataDirectory ?>/password.txt<br>
-<input name="password" type="password">
+    Domains<br>
+    One domain name per line<br>
+    <textarea name="domainNames" rows="5"></textarea>
 </p>
-
+<p>
+    Password<br>
+    Contents of <?= $certsage->dataDirectory ?>/password.txt<br>
+    <input name="password" type="password">
+</p>
 <input name="action" value="installcertificate" type="hidden">
-
 <button name="environment" value="production" type="submit">Install Certificate into cPanel</button>
 </form>
 
