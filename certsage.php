@@ -1,3 +1,4 @@
+#!/usr/bin/php
 <?php
 
 /*
@@ -898,7 +899,22 @@ try
   $certsage = new CertSage();
 
   $certsage->initialize();
-
+if (PHP_SAPI === 'cli') {
+  if (in_array('--help', $_SERVER['argv'])) {
+    echo "Usage: php certsage.php [options]\n";
+    echo "Options:\n";
+    echo "  action=acquirecertificate      Acquire a certificate\n";
+    echo "  action=installcertificate      Install a certificate into cPanel\n";
+    echo "  action=updatecontact           Update contact information\n";
+    echo "  domainNames=example.com        Specify domain names (one per line)\n";
+    echo "  subjectAltNames=alt.example.com Specify SANs (one per line)\n";
+    echo "  password=your_password         Specify the password\n";
+    echo "  environment=production|staging Specify the environment\n";
+    echo "Use '--help' to display this help message.\n";
+    exit(0);
+  }
+  parse_str(implode('&', array_slice($argv, 1)), $_POST);
+}
   if (!isset($_POST["action"]))
   {
     $domainNames = $certsage->extractDomainNames();
