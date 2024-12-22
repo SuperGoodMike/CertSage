@@ -303,34 +303,7 @@ class CertSage
       throw new Exception("check certificate failed");
 
     // *** EXTRACT DOMAIN NAMES ***
-public function handleCLI($argv) {
-  $options = getopt("", ["action:", "domainNames:", "subjectAltNames::", "password:", "environment:"]);
 
-  if (!isset($options['action'])) {
-    throw new Exception("CLI action was not provided.");
-  }
-
-  $action = $options['action'];
-
-  $_POST['domainNames'] = $options['domainNames'] ?? null;
-  $_POST['subjectAltNames'] = $options['subjectAltNames'] ?? null;
-  $_POST['password'] = $options['password'] ?? null;
-  $_POST['environment'] = $options['environment'] ?? null;
-
-  switch ($action) {
-    case "acquirecertificate":
-      $this->acquireCertificate();
-      break;
-    case "installcertificate":
-      $this->installCertificate();
-      break;
-    case "updatecontact":
-      $this->updateContact();
-      break;
-    default:
-      throw new Exception("unknown action: " . $action);
-  }
-}
     $certificateData = openssl_x509_parse($certificateObject);
 
     if ($certificateData === false)
@@ -920,39 +893,56 @@ public function acquireCertificate()
 
 // *** MAIN ***
 
-try {
+try
+{
   $certsage = new CertSage();
+
   $certsage->initialize();
 
-  if (php_sapi_name() == "cli") {
-    global $argv;
-    $certsage->handleCLI($argv);
-  } else {
-    if (!isset($_POST["action"])) {
-      $domainNames = $certsage->extractDomainNames();
-      $page = "welcome";
-    } elseif (!is_string($_POST["action"])) {
-      throw new Exception("action was not a string");
-    } else {
-      $certsage->checkPassword();
-      switch ($_POST["action"]) {
-        case "acquirecertificate":
-          $certsage->acquireCertificate();
-          break;
-        case "installcertificate":
-          $certsage->installCertificate();
-          break;
-        case "updatecontact":
-          $certsage->updateContact();
-          break;
-        default:
-          throw new Exception("unknown action: " . $_POST["action"]);
-      }
-      $page = "success";
-    }
+  if (!isset($_POST["action"]))
+  {
+    $domainNames = $certsage->extractDomainNames();
+
+    $page = "welcome";
   }
-} catch (Exception $e) {
+  elseif (!is_string($_POST["action"]))
+    throw new Exception("action was not a string");
+  else
+  {
+    $certsage->checkpassword();
+
+    switch ($_POST["action"])
+    {
+      case "acquirecertificate":
+
+        $certsage->acquireCertificate();
+
+        break;
+
+      case "installcertificate":
+
+        $certsage->installCertificate();
+
+        break;
+
+      case "updatecontact":
+
+        $certsage->updateContact();
+
+        break;
+
+      default:
+
+        throw new Exception("unknown action: " . $_POST["action"]);
+    }
+
+    $page = "success";
+  }
+}
+catch (Exception $e)
+{
   $error = $e->getMessage();
+
   $page = "trouble";
 }
 ?>
